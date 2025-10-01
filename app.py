@@ -19,6 +19,21 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # Inicjalizacja aplikacji Flask
 app = Flask(__name__)
 CORS(app)  # Włącz CORS dla wszystkich endpointów
+# Inicjalizacja aplikacji Flask
+app = Flask(__name__)
+CORS(app)
+@app.route('/')
+def index():
+    return jsonify({"status": "API is running", "timestamp": datetime.now().isoformat()})
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"})
+
+# Test endpoint
+@app.route('/test')
+def test():
+    return "Test successful!"
 
 # ===================================
 # ENDPOINT: /health
@@ -248,3 +263,6 @@ def get_menu():
 # ENDPOINT: /
 # Strona główna z dokumentacją API
 # ===
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
