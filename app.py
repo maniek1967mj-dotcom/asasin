@@ -155,7 +155,6 @@ def initialize_openai_client():
         return None
     
     try:
-        # Fixed: Removed 'proxies' parameter that was causing the error
         openai_client = OpenAI(
             api_key=OPENAI_API_KEY
         )
