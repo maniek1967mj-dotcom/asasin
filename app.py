@@ -219,3 +219,6 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     print(f"Starting Flask app on port {port}...", flush=True)
     app.run(host='0.0.0.0', port=port, debug=False)
+else:
+    # Gdy uruchamiany przez Gunicorn
+    print(f"Flask app ready for Gunicorn", flush=True)
