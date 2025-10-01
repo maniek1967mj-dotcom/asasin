@@ -1,6 +1,6 @@
-flask==3.0.3
-flask-cors==4.0.0
-openai==1.48.0
+Flask==3.0.3
+openai==1.51.0
+httpx==0.27.2
+python-dotenv==1.0.1
 psycopg2-binary==2.9.9
-gunicorn==21.2.0
-python-dotenv==1.0.0
+gunicorn==23.0.0
