@@ -1,464 +1,467 @@
 import os
 import sys
+import json
+import time
 import logging
-from flask import Flask, request, jsonify
+from datetime import datetime
+from typing import Optional, Dict, Any
+import traceback
+
+# Flask imports
+from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
-from openai import OpenAI
+
+# Database imports
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
-from dotenv import load_dotenv
+from psycopg2 import pool
+import urllib.parse
 
-# ===================================
-# ŁADOWANIE ZMIENNYCH ŚRODOWISKOWYCH
-# ===================================
-load_dotenv()  # Załaduj zmienne z .env (dla lokalnego testowania)
+# OpenAI imports
+from openai import OpenAI
 
-# ===================================
-# KONFIGURACJA LOGOWANIA
-# ===================================
+# Configure logging FIRST - before any other operations
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# ===================================
-# INFORMACJE STARTOWE
-# ===================================
-logger.info("=" * 50)
+# Log startup
+logger.info("="*50)
 logger.info("STARTING FLASK APPLICATION")
-logger.info("=" * 50)
+logger.info("="*50)
 logger.info(f"Python version: {sys.version}")
 logger.info(f"Current directory: {os.getcwd()}")
-logger.info(f"PORT: {os.environ.get('PORT', 'NOT SET - will use 8080')}")
-logger.info(f"DATABASE_URL: {'SET' if os.environ.get('DATABASE_URL') else 'NOT SET'}")
-logger.info(f"OPENAI_API_KEY: {'SET' if os.environ.get('OPENAI_API_KEY') else 'NOT SET'}")
-logger.info(f"RAILWAY_ENVIRONMENT: {os.environ.get('RAILWAY_ENVIRONMENT', 'NOT RAILWAY')}")
 
-# ===================================
-# KONFIGURACJA ZMIENNYCH ŚRODOWISKOWYCH
-# ===================================
-PORT = int(os.environ.get('PORT', 8080))
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
-# Poprawka dla Railway PostgreSQL URLs
-if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-    logger.info("Converted postgres:// to postgresql:// for compatibility")
-
-# ===================================
-# INICJALIZACJA OPENAI CLIENT
-# ===================================
-client = None
-if OPENAI_API_KEY:
+# Get PORT from environment - CRITICAL FOR RAILWAY
+# Railway provides PORT dynamically - NEVER hardcode it!
+PORT = os.environ.get('PORT')
+if PORT:
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        # Test połączenia
-        test_response = client.models.list()
-        logger.info("✓ OpenAI client initialized and verified successfully")
-    except Exception as e:
-        logger.error(f"✗ Failed to initialize OpenAI client: {e}")
-        client = None
+        PORT = int(PORT)
+        logger.info(f"PORT from environment: {PORT}")
+    except ValueError:
+        logger.error(f"Invalid PORT value: {PORT}, using default 5000")
+        PORT = 5000
 else:
-    logger.warning("⚠ OpenAI API key not found - chat functionality will be disabled")
+    PORT = 5000
+    logger.warning("PORT not found in environment, using default 5000")
 
-# ===================================
-# INICJALIZACJA FLASK
-# ===================================
+# Validate port range
+if not (1 <= PORT <= 65535):
+    logger.error(f"PORT {PORT} out of valid range, using 5000")
+    PORT = 5000
+
+# Get other environment variables
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+RAILWAY_ENVIRONMENT = os.environ.get('RAILWAY_ENVIRONMENT', 'development')
+
+# Log environment status (without exposing sensitive data)
+logger.info(f"PORT: {PORT}")
+logger.info(f"DATABASE_URL: {'SET' if DATABASE_URL else 'NOT SET'}")
+logger.info(f"OPENAI_API_KEY: {'SET' if OPENAI_API_KEY else 'NOT SET'}")
+logger.info(f"RAILWAY_ENVIRONMENT: {RAILWAY_ENVIRONMENT}")
+
+# Initialize Flask app
 app = Flask(__name__)
+CORS(app)
 
-# Konfiguracja CORS - bardziej liberalna dla Railway
-CORS(app, 
-     origins="*",
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     supports_credentials=True)
+# Global variables for services
+db_pool = None
+openai_client = None
 
-# Konfiguracja Flask
-app.config['JSON_AS_ASCII'] = False
-app.config['JSON_SORT_KEYS'] = False
-app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
+def fix_database_url(url: str) -> str:
+    """Convert postgres:// to postgresql:// for compatibility"""
+    if url and url.startswith('postgres://'):
+        url = url.replace('postgres://', 'postgresql://', 1)
+        logger.info("Converted database URL from postgres:// to postgresql://")
+    return url
 
-logger.info("✓ Flask app initialized")
-
-# ===================================
-# FUNKCJE POMOCNICZE BAZY DANYCH
-# ===================================
-def get_db_connection():
-    """Tworzy połączenie z bazą danych PostgreSQL z retry logic"""
+def create_db_pool(max_retries: int = 3) -> Optional[psycopg2.pool.SimpleConnectionPool]:
+    """Create PostgreSQL connection pool with retry logic"""
+    global DATABASE_URL
+    
     if not DATABASE_URL:
-        logger.debug("DATABASE_URL not configured")
+        logger.warning("DATABASE_URL not set, skipping database initialization")
         return None
     
-    max_retries = 3
-    retry_count = 0
+    # Fix URL format
+    DATABASE_URL = fix_database_url(DATABASE_URL)
     
-    while retry_count < max_retries:
+    for attempt in range(max_retries):
         try:
-            conn = psycopg2.connect(
-                DATABASE_URL,
-                cursor_factory=RealDictCursor,
-                connect_timeout=10,
-                options='-c statement_timeout=30000',
-                keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5
+            logger.info(f"Attempting to create database connection pool (attempt {attempt + 1}/{max_retries})")
+            
+            # Parse database URL
+            result = urllib.parse.urlparse(DATABASE_URL)
+            
+            pool = psycopg2.pool.SimpleConnectionPool(
+                1, 20,  # min and max connections
+                database=result.path[1:],
+                user=result.username,
+                password=result.password,
+                host=result.hostname,
+                port=result.port
             )
-            logger.debug("Database connection established")
-            return conn
-        except psycopg2.OperationalError as e:
-            retry_count += 1
-            logger.warning(f"Database connection attempt {retry_count}/{max_retries} failed: {e}")
-            if retry_count >= max_retries:
-                logger.error("Failed to connect to database after all retries")
-                return None
+            
+            # Test connection
+            conn = pool.getconn()
+            conn.close()
+            pool.putconn(conn)
+            
+            logger.info("✓ Database connection pool created successfully")
+            return pool
+            
         except Exception as e:
-            logger.error(f"Unexpected database connection error: {e}")
-            return None
-    
-    return None
+            logger.error(f"Database connection attempt {attempt + 1} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                logger.error("Failed to create database connection pool after all retries")
+                return None
 
 def init_database():
-    """Inicjalizuje tabelę w bazie danych"""
-    if not DATABASE_URL:
-        logger.warning("⚠ Skipping database initialization - DATABASE_URL not set")
-        return False
+    """Initialize database tables"""
+    if not db_pool:
+        logger.warning("Database pool not available, skipping table initialization")
+        return
     
-    conn = get_db_connection()
-    if not conn:
-        logger.error("✗ Could not establish database connection for initialization")
-        return False
-    
+    conn = None
+    cursor = None
     try:
-        cur = conn.cursor()
+        conn = db_pool.getconn()
+        cursor = conn.cursor()
         
-        # Tworzenie tabeli conversations
-        cur.execute('''
+        # Create conversations table
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
                 id SERIAL PRIMARY KEY,
-                user_message TEXT NOT NULL,
-                assistant_message TEXT NOT NULL,
+                user_id VARCHAR(255),
+                message TEXT NOT NULL,
+                response TEXT NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                model_used VARCHAR(100) DEFAULT 'gpt-4o-mini',
-                tokens_used INTEGER DEFAULT 0,
-                ip_address VARCHAR(45),
-                user_agent TEXT
+                model VARCHAR(100),
+                tokens_used INTEGER,
+                error TEXT
             )
-        ''')
+        """)
         
-        # Tworzenie indeksu na timestamp dla szybszego sortowania
-        cur.execute('''
-            CREATE INDEX IF NOT EXISTS idx_conversations_timestamp 
-            ON conversations(timestamp DESC)
-        ''')
+        # Create health_checks table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS health_checks (
+                id SERIAL PRIMARY KEY,
+                status VARCHAR(50),
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                details JSONB
+            )
+        """)
         
         conn.commit()
         logger.info("✓ Database tables initialized successfully")
-        return True
         
     except Exception as e:
-        logger.error(f"✗ Database initialization error: {e}")
-        conn.rollback()
-        return False
+        logger.error(f"Failed to initialize database tables: {str(e)}")
+        if conn:
+            conn.rollback()
     finally:
-        conn.close()
+        if cursor:
+            cursor.close()
+        if conn:
+            db_pool.putconn(conn)
 
-# ===================================
-# PODSTAWOWE ENDPOINTY
-# ===================================
-@app.route('/')
-def index():
-    """Główny endpoint z informacjami o API"""
-    return jsonify({
-        "service": "Flask Chat API",
-        "status": "running",
-        "timestamp": datetime.utcnow().isoformat() + 'Z',
-        "version": "2.0",
-        "environment": os.environ.get('RAILWAY_ENVIRONMENT', 'local'),
-        "endpoints": {
-            "health": "/health",
-            "ping": "/ping", 
-            "chat": "/api/chat",
-            "history": "/api/history",
-            "test_openai": "/api/test-openai",
-            "system_status": "/api/status"
-        }
-    })
-
-@app.route('/health')
-def health():
-    """Health check endpoint dla Railway"""
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat() + 'Z'
-    }), 200
-
-@app.route('/ping')
-def ping():
-    """Quick ping endpoint"""
-    return jsonify({
-        "pong": True,
-        "timestamp": datetime.utcnow().isoformat() + 'Z'
-    }), 200
-
-@app.route('/api/status')
-def system_status():
-    """Szczegółowy status systemu"""
-    db_status = "connected" if get_db_connection() else "disconnected"
-    
-    return jsonify({
-        "status": "operational",
-        "timestamp": datetime.utcnow().isoformat() + 'Z',
-        "components": {
-            "flask": "running",
-            "database": db_status,
-            "openai": "configured" if client else "not configured",
-            "port": PORT
-        },
-        "environment": {
-            "railway": os.environ.get('RAILWAY_ENVIRONMENT', 'not on railway'),
-            "python_version": sys.version.split()[0]
-        }
-    })
-
-# ===================================
-# ENDPOINT CHATBOTA  
-# ===================================
-@app.route('/api/chat', methods=['POST', 'OPTIONS'])
-def chat():
-    """Główny endpoint do komunikacji z chatbotem"""
-    # Obsługa CORS preflight
-    if request.method == 'OPTIONS':
-        return '', 204
+def init_openai_client() -> Optional[OpenAI]:
+    """Initialize OpenAI client with verification"""
+    if not OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY not set, OpenAI features will be disabled")
+        return None
     
     try:
-        # Sprawdzenie konfiguracji OpenAI
-        if not client:
-            logger.error("Chat request received but OpenAI not configured")
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Test the API key
+        models = client.models.list()
+        logger.info("✓ OpenAI client initialized and verified successfully")
+        return client
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+        return None
+
+# Initialize services
+logger.info("Initializing services...")
+db_pool = create_db_pool()
+openai_client = init_openai_client()
+logger.info("✓ Services initialization completed")
+
+# Initialize database tables
+if db_pool:
+    logger.info("Initializing database tables...")
+    init_database()
+    logger.info("✓ Database initialization completed")
+
+# Health check endpoint - CRITICAL FOR RAILWAY
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint for Railway"""
+    health_status = {
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'port': PORT,
+        'environment': RAILWAY_ENVIRONMENT,
+        'services': {
+            'database': 'connected' if db_pool else 'disconnected',
+            'openai': 'connected' if openai_client else 'disconnected'
+        }
+    }
+    
+    # Test database connection
+    if db_pool:
+        conn = None
+        try:
+            conn = db_pool.getconn()
+            cursor = conn.cursor()
+            cursor.execute('SELECT 1')
+            cursor.close()
+            db_pool.putconn(conn)
+        except Exception as e:
+            health_status['services']['database'] = f'error: {str(e)}'
+            health_status['status'] = 'degraded'
+            if conn:
+                db_pool.putconn(conn)
+    
+    status_code = 200 if health_status['status'] == 'healthy' else 503
+    return jsonify(health_status), status_code
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    """Simple ping endpoint"""
+    return jsonify({'pong': True, 'timestamp': datetime.utcnow().isoformat()})
+
+@app.route('/status', methods=['GET'])
+def status():
+    """Detailed status endpoint"""
+    return jsonify({
+        'application': 'Flask ChatGPT App',
+        'version': '1.0.0',
+        'status': 'running',
+        'port': PORT,
+        'environment': RAILWAY_ENVIRONMENT,
+        'timestamp': datetime.utcnow().isoformat(),
+        'python_version': sys.version,
+        'services': {
+            'database': {
+                'connected': bool(db_pool),
+                'url_set': bool(DATABASE_URL)
+            },
+            'openai': {
+                'connected': bool(openai_client),
+                'api_key_set': bool(OPENAI_API_KEY)
+            }
+        }
+    })
+
+@app.route('/')
+def home():
+    """Home page"""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Flask ChatGPT App</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                padding: 30px;
+                backdrop-filter: blur(10px);
+            }
+            h1 { color: white; }
+            .status { 
+                background: rgba(255, 255, 255, 0.2);
+                padding: 15px;
+                border-radius: 5px;
+                margin: 10px 0;
+            }
+            .endpoint {
+                background: rgba(0, 0, 0, 0.2);
+                padding: 10px;
+                margin: 5px 0;
+                border-radius: 3px;
+                font-family: monospace;
+            }
+            .online { color: #4ade80; }
+            .offline { color: #f87171; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 Flask ChatGPT App on Railway</h1>
+            <div class="status">
+                <h2>System Status</h2>
+                <p>Port: <strong>{{ port }}</strong></p>
+                <p>Environment: <strong>{{ environment }}</strong></p>
+                <p>Database: <strong class="{{ 'online' if db_status else 'offline' }}">
+                    {{ 'Connected' if db_status else 'Not Connected' }}
+                </strong></p>
+                <p>OpenAI API: <strong class="{{ 'online' if openai_status else 'offline' }}">
+                    {{ 'Connected' if openai_status else 'Not Connected' }}
+                </strong></p>
+            </div>
+            <div class="status">
+                <h2>Available Endpoints</h2>
+                <div class="endpoint">GET /health - Health check</div>
+                <div class="endpoint">GET /ping - Simple ping</div>
+                <div class="endpoint">GET /status - Detailed status</div>
+                <div class="endpoint">POST /chat - Chat with AI</div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html, 
+        port=PORT,
+        environment=RAILWAY_ENVIRONMENT,
+        db_status=bool(db_pool),
+        openai_status=bool(openai_client)
+    )
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    """Chat endpoint for OpenAI integration"""
+    try:
+        # Check if OpenAI is available
+        if not openai_client:
             return jsonify({
-                "error": "Chat service unavailable",
-                "message": "OpenAI API is not configured. Please contact administrator."
+                'error': 'OpenAI service not available',
+                'message': 'Please configure OPENAI_API_KEY'
             }), 503
         
-        # Parsowanie danych
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({
-                "error": "Invalid request",
-                "message": "Request body must be valid JSON"
-            }), 400
+        # Get request data
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return jsonify({'error': 'No message provided'}), 400
         
-        user_message = data.get('message', '').strip()
-        if not user_message:
-            return jsonify({
-                "error": "Invalid request", 
-                "message": "Message field is required and cannot be empty"
-            }), 400
+        user_message = data['message']
+        user_id = data.get('user_id', 'anonymous')
+        model = data.get('model', 'gpt-3.5-turbo')
         
-        # Logowanie request info
-        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-        user_agent = request.headers.get('User-Agent', 'Unknown')
-        logger.info(f"Chat request from {client_ip}: '{user_message[:50]}...'")
+        logger.info(f"Chat request from user {user_id}: {user_message[:50]}...")
         
-        # Wywołanie OpenAI API
+        # Call OpenAI API
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
+            response = openai_client.chat.completions.create(
+                model=model,
                 messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are a helpful assistant. Respond concisely and clearly."
-                    },
-                    {
-                        "role": "user", 
-                        "content": user_message
-                    }
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": user_message}
                 ],
-                max_tokens=500,
-                temperature=0.7,
-                top_p=0.9,
-                frequency_penalty=0.0,
-                presence_penalty=0.0
+                max_tokens=1000,
+                temperature=0.7
             )
             
-            assistant_message = response.choices[0].message.content
+            ai_response = response.choices[0].message.content
             tokens_used = response.usage.total_tokens if response.usage else 0
-            model_used = response.model
             
-            logger.info(f"OpenAI response successful. Tokens: {tokens_used}")
+            # Store in database if available
+            if db_pool:
+                conn = None
+                try:
+                    conn = db_pool.getconn()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO conversations (user_id, message, response, model, tokens_used)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (user_id, user_message, ai_response, model, tokens_used))
+                    conn.commit()
+                    cursor.close()
+                except Exception as e:
+                    logger.error(f"Failed to store conversation: {str(e)}")
+                    if conn:
+                        conn.rollback()
+                finally:
+                    if conn:
+                        db_pool.putconn(conn)
+            
+            return jsonify({
+                'response': ai_response,
+                'tokens_used': tokens_used,
+                'model': model
+            })
             
         except Exception as e:
-            logger.error(f"OpenAI API call failed: {e}")
+            logger.error(f"OpenAI API error: {str(e)}")
+            
+            # Store error in database if available
+            if db_pool:
+                conn = None
+                try:
+                    conn = db_pool.getconn()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO conversations (user_id, message, response, model, error)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (user_id, user_message, '', model, str(e)))
+                    conn.commit()
+                    cursor.close()
+                except Exception as db_error:
+                    logger.error(f"Failed to store error: {str(db_error)}")
+                    if conn:
+                        conn.rollback()
+                finally:
+                    if conn:
+                        db_pool.putconn(conn)
+            
             return jsonify({
-                "error": "AI service error",
-                "message": "Failed to generate response. Please try again."
+                'error': 'Failed to get AI response',
+                'details': str(e)
             }), 500
-        
-        # Zapis do bazy danych (opcjonalny - nie blokuje odpowiedzi)
-        try:
-            conn = get_db_connection()
-            if conn:
-                cur = conn.cursor()
-                cur.execute('''
-                    INSERT INTO conversations 
-                    (user_message, assistant_message, model_used, tokens_used, ip_address, user_agent) 
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                ''', (user_message, assistant_message, model_used, tokens_used, client_ip, user_agent))
-                conn.commit()
-                conn.close()
-                logger.debug("Conversation saved to database")
-        except Exception as e:
-            logger.warning(f"Failed to save conversation to database: {e}")
-            # Nie zwracamy błędu - zapis do bazy jest opcjonalny
-        
-        # Zwróć odpowiedź
-        return jsonify({
-            "response": assistant_message,
-            "model": model_used,
-            "tokens": tokens_used,
-            "timestamp": datetime.utcnow().isoformat() + 'Z'
-        }), 200
-        
+            
     except Exception as e:
-        logger.error(f"Unexpected error in chat endpoint: {e}", exc_info=True)
+        logger.error(f"Chat endpoint error: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({
-            "error": "Internal server error",
-            "message": "An unexpected error occurred. Please try again."
+            'error': 'Internal server error',
+            'details': str(e)
         }), 500
 
-# ===================================
-# ENDPOINT HISTORII
-# ===================================
-@app.route('/api/history', methods=['GET'])
-def history():
-    """Zwraca historię konwersacji"""
-    try:
-        limit = request.args.get('limit', 20, type=int)
-        limit = min(limit, 100)  # Maksymalnie 100 rekordów
-        
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({
-                "conversations": [],
-                "message": "Database not available"
-            }), 200
-        
-        cur = conn.cursor()
-        cur.execute('''
-            SELECT id, user_message, assistant_message, 
-                   timestamp, model_used, tokens_used 
-            FROM conversations 
-            ORDER BY timestamp DESC 
-            LIMIT %s
-        ''', (limit,))
-        
-        rows = cur.fetchall()
-        conn.close()
-        
-        # Formatowanie timestamp
-        for row in rows:
-            if row.get('timestamp'):
-                row['timestamp'] = row['timestamp'].isoformat() + 'Z'
-        
-        return jsonify({
-            "conversations": rows,
-            "count": len(rows),
-            "limit": limit
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error fetching history: {e}")
-        return jsonify({
-            "conversations": [],
-            "error": "Failed to fetch history"
-        }), 500
-
-# ===================================
-# ENDPOINT TESTOWY OPENAI
-# ===================================
-@app.route('/api/test-openai', methods=['GET'])
-def test_openai():
-    """Testuje połączenie z OpenAI"""
-    if not client:
-        return jsonify({
-            "status": "error",
-            "message": "OpenAI not configured"
-        }), 503
-    
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": "Respond with 'OK' if you receive this."
-            }],
-            max_tokens=10
-        )
-        
-        return jsonify({
-            "status": "success",
-            "response": response.choices[0].message.content,
-            "model": response.model
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"OpenAI test failed: {e}")
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
-
-# ===================================
-# ERROR HANDLERS
-# ===================================
 @app.errorhandler(404)
-def not_found(error):
-    return jsonify({
-        "error": "Not found",
-        "message": "The requested endpoint does not exist",
-        "status": 404
-    }), 404
+def not_found(e):
+    """404 error handler"""
+    return jsonify({'error': 'Endpoint not found'}), 404
 
-@app.errorhandler(500) 
-def internal_error(error):
-    logger.error(f"Internal server error: {error}")
-    return jsonify({
-        "error": "Internal server error",
-        "message": "An internal error occurred",
-        "status": 500
-    }), 500
+@app.errorhandler(500)
+def server_error(e):
+    """500 error handler"""
+    logger.error(f"Internal server error: {str(e)}")
+    return jsonify({'error': 'Internal server error'}), 500
 
-@app.errorhandler(Exception)
-def handle_exception(e):
-    logger.error(f"Unhandled exception: {e}", exc_info=True)
-    return jsonify({
-        "error": "Server error",
-        "message": "An unexpected error occurred",
-        "status": 500
-    }), 500
-
-# ===================================
-# INICJALIZACJA APLIKACJI
-# ===================================
-logger.info("Initializing database...")
-if init_database():
-    logger.info("✓ Database initialization completed")
-else:
-    logger.warning("⚠ Database initialization skipped or failed")
-
-logger.info("=" * 50)
-logger.info(f"FLASK APP READY - Port: {PORT}")
-logger.info("=" * 50)
-
-# ===================================
-# URUCHOMIENIE APLIKACJI
-# ===================================
+# CRITICAL: This is for running locally - Gunicorn will import 'app'
 if __name__ == '__main__':
-    logger.info(f"Running Flask development server on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    # This block only runs when executing the script directly
+    # Gunicorn imports the 'app' object, so this won't run in production
+    logger.info("="*50)
+    logger.info(f"STARTING DEVELOPMENT SERVER ON PORT {PORT}")
+    logger.info("="*50)
+    app.run(
+        host='0.0.0.0',
+        port=PORT,
+        debug=(RAILWAY_ENVIRONMENT != 'production')
+    )
 else:
-    logger.info(f"Flask app ready for Gunicorn on port {PORT}")
+    # This runs when imported by Gunicorn
+    logger.info("="*50)
+    logger.info(f"FLASK APP READY FOR GUNICORN - Port from env: {PORT}")
+    logger.info("="*50)
