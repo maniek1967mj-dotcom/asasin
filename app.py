@@ -1,4 +1,5 @@
 import os
+import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from openai import OpenAI
@@ -6,6 +7,15 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
 from datetime import datetime
+
+# ===================================
+# LOGI DEBUGOWANIA
+# ===================================
+print(f"Python version: {sys.version}", flush=True)
+print(f"Starting Flask app...", flush=True)
+print(f"PORT: {os.environ.get('PORT', 'not set')}", flush=True)
+print(f"DATABASE_URL: {'set' if os.environ.get('DATABASE_URL') else 'not set'}", flush=True)
+print(f"OPENAI_API_KEY: {'set' if os.environ.get('OPENAI_API_KEY') else 'not set'}", flush=True)
 
 # ===================================
 # KONFIGURACJA ZMIENNYCH ŚRODOWISKOWYCH
@@ -16,253 +26,196 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 # Inicjalizacja klienta OpenAI (tylko jeśli klucz istnieje)
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# Inicjalizacja aplikacji Flask
+# ===================================
+# INICJALIZACJA FLASK
+# ===================================
 app = Flask(__name__)
 CORS(app)  # Włącz CORS dla wszystkich endpointów
-# Inicjalizacja aplikacji Flask
-app = Flask(__name__)
-CORS(app)
+
+# ===================================
+# PODSTAWOWE ENDPOINTY
+# ===================================
 @app.route('/')
 def index():
-    return jsonify({"status": "API is running", "timestamp": datetime.now().isoformat()})
+    return jsonify({
+        "status": "API is running",
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.0"
+    })
 
 @app.route('/health')
 def health():
     return jsonify({"status": "healthy"})
 
-# Test endpoint
 @app.route('/test')
 def test():
     return "Test successful!"
 
 # ===================================
-# ENDPOINT: /health
-# Sprawdzenie stanu aplikacji
+# FUNKCJE POMOCNICZE BAZY DANYCH
 # ===================================
-@app.route("/health", methods=["GET"])
-def health():
-    """Zwraca status aplikacji i dostępność usług"""
-    return jsonify({
-        "ok": True,
-        "service": "restaurant_assistant",
-        "timestamp": datetime.now().isoformat(),
-        "has_openai": bool(OPENAI_API_KEY),
-        "has_database": bool(DATABASE_URL),
-        "version": "1.0.0"
-    })
+def get_db_connection():
+    """Tworzy połączenie z bazą danych PostgreSQL"""
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        print(f"Database connection error: {e}", flush=True)
+        return None
+
+def init_database():
+    """Inicjalizuje tabelę w bazie danych"""
+    conn = get_db_connection()
+    if not conn:
+        print("Skipping database initialization - no connection", flush=True)
+        return
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id SERIAL PRIMARY KEY,
+                user_message TEXT NOT NULL,
+                assistant_message TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        print("Database initialized successfully", flush=True)
+    except Exception as e:
+        print(f"Database initialization error: {e}", flush=True)
+    finally:
+        conn.close()
 
 # ===================================
-# ENDPOINT: /haiku
-# Generator haiku przez OpenAI
+# ENDPOINT CHATBOTA
 # ===================================
-@app.route("/haiku", methods=["POST"])
-def haiku():
-    """Generuje haiku na podany temat"""
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    """Endpoint do komunikacji z chatbotem"""
     try:
-        # Pobierz dane z requestu
-        data = request.get_json(silent=True) or {}
-        topic = data.get("topic", "restauracja")
-        
-        # Sprawdź dostępność OpenAI
+        # Sprawdź czy OpenAI jest skonfigurowane
         if not client:
             return jsonify({
                 "error": "OpenAI API key not configured"
-            }), 503
+            }), 500
         
-        # Wygeneruj haiku
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Jesteś poetą tworzącym haiku po polsku."
-                },
-                {
-                    "role": "user",
-                    "content": f"Napisz krótkie haiku o: {topic}"
-                }
-            ],
-            temperature=0.7,
-            max_tokens=100
-        )
-        
-        haiku_text = response.choices[0].message.content.strip()
-        
-        return jsonify({
-            "ok": True,
-            "topic": topic,
-            "haiku": haiku_text
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "error": str(e)
-        }), 500
-
-# ===================================
-# ENDPOINT: /db-ping
-# Test połączenia z bazą danych
-# ===================================
-@app.route("/db-ping", methods=["GET"])
-def db_ping():
-    """Testuje połączenie z bazą PostgreSQL"""
-    
-    if not DATABASE_URL:
-        return jsonify({
-            "ok": False,
-            "error": "DATABASE_URL not configured"
-        }), 503
-    
-    conn = None
-    try:
-        # Połącz z bazą
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        
-        # Wykonaj testowe zapytanie
-        cur.execute("SELECT version(), current_timestamp;")
-        result = cur.fetchone()
-        
-        # Zamknij cursor
-        cur.close()
-        
-        return jsonify({
-            "ok": True,
-            "database_version": result[0] if result else None,
-            "server_time": str(result[1]) if result and len(result) > 1 else None
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "error": str(e)
-        }), 500
-        
-    finally:
-        if conn:
-            conn.close()
-
-# ===================================
-# ENDPOINT: /assistant
-# Główny endpoint asystenta restauracji
-# ===================================
-@app.route("/assistant", methods=["POST"])
-def assistant():
-    """Główna funkcja asystenta restauracyjnego"""
-    try:
-        # Pobierz zapytanie użytkownika
-        data = request.get_json(silent=True) or {}
-        user_message = data.get("message", "")
+        # Pobierz wiadomość od użytkownika
+        data = request.json
+        user_message = data.get('message', '')
         
         if not user_message:
             return jsonify({
-                "ok": False,
-                "error": "No message provided"
+                "error": "Message is required"
             }), 400
         
-        # Sprawdź dostępność OpenAI
-        if not client:
-            return jsonify({
-                "ok": False,
-                "error": "OpenAI API key not configured"
-            }), 503
-        
-        # System prompt dla asystenta restauracji
-        system_prompt = """Jesteś profesjonalnym asystentem restauracji. 
-        Pomagasz klientom w:
-        - Wyborze dań z menu
-        - Składaniu zamówień
-        - Odpowiadaniu na pytania o składniki i alergeny
-        - Rekomendowaniu dań
-        - Informowaniu o czasie oczekiwania
-        Bądź uprzejmy, profesjonalny i pomocny."""
-        
-        # Wygeneruj odpowiedź
+        # Wywołaj OpenAI API (nowa składnia dla wersji 1.50.0)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": user_message}
             ],
-            temperature=0.7,
-            max_tokens=500
+            max_tokens=500,
+            temperature=0.7
         )
         
-        assistant_reply = response.choices[0].message.content.strip()
+        assistant_message = response.choices[0].message.content
+        
+        # Zapisz do bazy danych (jeśli połączona)
+        conn = get_db_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    'INSERT INTO conversations (user_message, assistant_message) VALUES (%s, %s)',
+                    (user_message, assistant_message)
+                )
+                conn.commit()
+            except Exception as e:
+                print(f"Database save error: {e}", flush=True)
+            finally:
+                conn.close()
         
         return jsonify({
-            "ok": True,
-            "user_message": user_message,
-            "assistant_reply": assistant_reply,
-            "timestamp": datetime.now().isoformat()
+            "response": assistant_message
         })
         
     except Exception as e:
+        print(f"Chat endpoint error: {e}", flush=True)
         return jsonify({
-            "ok": False,
+            "error": f"An error occurred: {str(e)}"
+        }), 500
+
+# ===================================
+# ENDPOINT HISTORII
+# ===================================
+@app.route('/api/history', methods=['GET'])
+def history():
+    """Zwraca historię rozmów"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify([])
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM conversations ORDER BY timestamp DESC LIMIT 10')
+        rows = cur.fetchall()
+        return jsonify(rows)
+    except Exception as e:
+        print(f"History endpoint error: {e}", flush=True)
+        return jsonify([])
+    finally:
+        conn.close()
+
+# ===================================
+# ENDPOINT TESTOWY DLA OPENAI
+# ===================================
+@app.route('/api/test-openai', methods=['GET'])
+def test_openai():
+    """Testuje połączenie z OpenAI"""
+    if not client:
+        return jsonify({"error": "OpenAI not configured"}), 500
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Say 'Hello, World!'"}],
+            max_tokens=10
+        )
+        return jsonify({
+            "status": "success",
+            "response": response.choices[0].message.content
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
             "error": str(e)
         }), 500
 
 # ===================================
-# ENDPOINT: /menu
-# Pobieranie menu z bazy (przykład)
+# ERROR HANDLERS
 # ===================================
-@app.route("/menu", methods=["GET"])
-def get_menu():
-    """Pobiera menu restauracji z bazy danych"""
-    
-    if not DATABASE_URL:
-        # Zwróć przykładowe menu, jeśli baza nie jest skonfigurowana
-        return jsonify({
-            "ok": True,
-            "menu": [
-                {"id": 1, "name": "Pizza Margherita", "price": 25.00, "category": "pizza"},
-                {"id": 2, "name": "Spaghetti Carbonara", "price": 28.00, "category": "pasta"},
-                {"id": 3, "name": "Caesar Salad", "price": 22.00, "category": "salad"}
-            ]
-        })
-    
-    conn = None
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Przykładowe zapytanie - dostosuj do swojej struktury bazy
-        cur.execute("""
-            SELECT id, name, price, category, description 
-            FROM menu_items 
-            WHERE available = true 
-            ORDER BY category, name;
-        """)
-        
-        items = cur.fetchall()
-        cur.close()
-        
-        return jsonify({
-            "ok": True,
-            "menu": items
-        })
-        
-    except Exception as e:
-        # Jeśli tabela nie istnieje, zwróć przykładowe dane
-        return jsonify({
-            "ok": True,
-            "menu": [
-                {"id": 1, "name": "Pizza Margherita", "price": 25.00, "category": "pizza"},
-                {"id": 2, "name": "Spaghetti Carbonara", "price": 28.00, "category": "pasta"}
-            ],
-            "note": "Using sample data - database table not found"
-        })
-        
-    finally:
-        if conn:
-            conn.close()
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Endpoint not found"}), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({"error": "Internal server error"}), 500
 
 # ===================================
-# ENDPOINT: /
-# Strona główna z dokumentacją API
-# ===
+# INICJALIZACJA PRZY STARCIE
+# ===================================
+print("Initializing database...", flush=True)
+init_database()
+
+# ===================================
+# URUCHOMIENIE APLIKACJI
+# ===================================
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    print(f"Starting Flask app on port {port}...", flush=True)
+    app.run(host='0.0.0.0', port=port, debug=False)
