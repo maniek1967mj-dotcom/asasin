@@ -12,8 +12,8 @@ app = Flask(__name__)
 @app.get("/health")
 def health():
     return jsonify(ok=True, service="my restaurant"),
-                   has_openai=bool(OPENAI_API_KEY),
-                   has_db=bool(DATABASE_URL))
+    has_openai=bool(OPENAI_API_KEY),
+    has_db=bool(DATABASE_URL))
 
 @app.post("/haiku")
 def haiku():
