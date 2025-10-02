@@ -15,6 +15,14 @@ import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI
+# --- Begin: OpenAI version logging (added for debugging) ---
+try:
+    import openai as _openai
+    ver = getattr(_openai, "__version__", "unknown")
+    logger.info(f"OpenAI module: package={getattr(_openai,'__package__', None)}, file={getattr(_openai,'__file__', None)}, version={ver}")
+except Exception as _e:
+    logger.info(f"OpenAI version check failed: {_e}")
+# --- End: OpenAI version logging ---
 from werkzeug.exceptions import HTTPException
 
 # ==================================================
