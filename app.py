@@ -15,7 +15,10 @@ import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI
+<<<<<<< HEAD
 
+=======
+>>>>>>> 8c5d3a8 (Move OpenAI version logging after logger definition)
 from werkzeug.exceptions import HTTPException
 
 # ==================================================
@@ -37,6 +40,10 @@ try:
 except Exception as _e:
     logger.info(f"OpenAI version check failed: {_e}")
 # --- End: OpenAI version logging ---
+ HEAD
+
+
+ 8c5d3a8 (Move OpenAI version logging after logger definition)
 
 # ==================================================
 # ENVIRONMENT VARIABLES
