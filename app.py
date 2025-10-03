@@ -960,6 +960,108 @@ def init_database_endpoint():
             'error': str(e)
         }), 500
 
+
+@app.route('/add-sample-data', methods=['POST'])
+def add_sample_data():
+    """Dodaje przykładowe dane testowe do bazy"""
+    try:
+        from datetime import date, time
+        
+        logger.info("=== Dodawanie danych testowych ===")
+        
+        # 1. MENU ITEMS (5 dań)
+        menu_items = [
+            MenuItem(name='Pizza Margherita', description='Klasyczna pizza z sosem pomidorowym i mozzarellą', 
+                    price=35.00, category='Main', cost_price=12.00, profit_margin=65.71, is_active=True),
+            MenuItem(name='Burger Wołowy', description='Soczysty burger z wołowiny z frytkami', 
+                    price=42.00, category='Main', cost_price=15.00, profit_margin=64.29, is_active=True),
+            MenuItem(name='Sałatka Caesar', description='Świeża sałatka z kurczakiem i parmezanem', 
+                    price=28.00, category='Appetizer', cost_price=10.00, profit_margin=64.29, is_active=True),
+            MenuItem(name='Kawa Latte', description='Aromatyczna kawa z mlekiem', 
+                    price=15.00, category='Beverage', cost_price=3.00, profit_margin=80.00, is_active=True),
+            MenuItem(name='Tiramisu', description='Włoski deser kawowy', 
+                    price=22.00, category='Dessert', cost_price=8.00, profit_margin=63.64, is_active=True)
+        ]
+        
+        for item in menu_items:
+            db.session.add(item)
+        
+        # 2. INVENTORY (5 produktów)
+        from datetime import timedelta
+        today = date.today()
+        
+        inventory_items = [
+            Inventory(product_name='Mąka pszenna', quantity=50.0, unit='kg', supplier='Młyn Polski',
+                     purchase_date=today, expiry_date=today + timedelta(days=180), 
+                     cost_per_unit=3.50, minimum_stock_level=10.0, category='Dry Goods', status='available'),
+            Inventory(product_name='Ser Mozzarella', quantity=15.0, unit='kg', supplier='Nabiał Fresh',
+                     purchase_date=today, expiry_date=today + timedelta(days=5), 
+                     cost_per_unit=18.00, minimum_stock_level=5.0, category='Dairy', status='available'),
+            Inventory(product_name='Pomidory', quantity=25.0, unit='kg', supplier='Warzywa Lokalne',
+                     purchase_date=today, expiry_date=today + timedelta(days=4), 
+                     cost_per_unit=6.00, minimum_stock_level=8.0, category='Vegetables', status='available'),
+            Inventory(product_name='Sałata lodowa', quantity=12.0, unit='szt', supplier='Warzywa Lokalne',
+                     purchase_date=today, expiry_date=today + timedelta(days=3), 
+                     cost_per_unit=2.50, minimum_stock_level=5.0, category='Vegetables', status='available'),
+            Inventory(product_name='Mleko 3.2%', quantity=30.0, unit='l', supplier='Nabiał Fresh',
+                     purchase_date=today, expiry_date=today + timedelta(days=6), 
+                     cost_per_unit=3.20, minimum_stock_level=10.0, category='Dairy', status='available')
+        ]
+        
+        for item in inventory_items:
+            db.session.add(item)
+        
+        # 3. EMPLOYEES (2 pracowników)
+        employees = [
+            Employee(first_name='Jan', last_name='Kowalski', position='Chef', 
+                    hourly_rate=35.00, phone='+48123456789', email='jan.kowalski@restaurant.pl',
+                    hire_date=date(2023, 1, 15), is_active=True),
+            Employee(first_name='Anna', last_name='Nowak', position='Waiter', 
+                    hourly_rate=22.00, phone='+48987654321', email='anna.nowak@restaurant.pl',
+                    hire_date=date(2023, 3, 10), is_active=True)
+        ]
+        
+        for emp in employees:
+            db.session.add(emp)
+        
+        # 4. RESERVATION (1 rezerwacja testowa)
+        reservation = Reservation(
+            customer_name='Marek Testowy',
+            phone='+48111222333',
+            email='marek@test.pl',
+            party_size=4,
+            reservation_date=today + timedelta(days=2),
+            reservation_time=time(18, 30),
+            table_number='5',
+            status='confirmed',
+            special_requests='Stolik przy oknie'
+        )
+        db.session.add(reservation)
+        
+        # Zapisz wszystko
+        db.session.commit()
+        logger.info("✅ Dane testowe dodane pomyślnie")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Sample data added successfully',
+            'added': {
+                'menu_items': 5,
+                'inventory': 5,
+                'employees': 2,
+                'reservations': 1
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Błąd dodawania danych testowych: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+
 # ==================================================
 # MAIN ENTRY POINT
 # ==================================================
