@@ -415,7 +415,10 @@ def check_db():
         return jsonify({
             'status': 'error',
             'error': str(e)
-        }), 500def health_check():
+        }), 500
+
+
+def health_check():
     """Health check endpoint"""
     health_status = {
         'status': 'healthy',
