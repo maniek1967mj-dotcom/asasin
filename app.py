@@ -170,16 +170,22 @@ def initialize_openai_client():
     try:
         logger.info("=== DEBUG: About to initialize OpenAI client ===")
         
-        # Wymuś brak proxy - usuń zmienne środowiskowe przed inicjalizacją
-        import os
-        proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
-        for var in proxy_vars:
-            if var in os.environ:
-                logger.warning(f"DEBUG: Removing proxy variable: {var}={os.environ[var]}")
-                del os.environ[var]
+        # Importuj httpx i stwórz klienta BEZ proxy
+        import httpx
         
-        # Initialize with ONLY api_key
-        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        # Stwórz custom HTTP client który ignoruje proxy
+        custom_http_client = httpx.Client(
+            proxies=None,  # Wymuś brak proxy
+            timeout=60.0
+        )
+        
+        logger.info("DEBUG: Created custom HTTP client without proxies")
+        
+        # Initialize OpenAI z custom HTTP client
+        openai_client = OpenAI(
+            api_key=OPENAI_API_KEY,
+            http_client=custom_http_client
+        )
         
         logger.info("✓ OpenAI client initialized successfully")
         return openai_client
@@ -193,7 +199,7 @@ def initialize_openai_client():
         logger.error(f"Failed to initialize OpenAI client: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        return Nonee
+        return None
 # ==================================================
 # DATABASE INITIALIZATION
 # ==================================================
