@@ -168,15 +168,29 @@ def initialize_openai_client():
         return None
     
     try:
-        openai_client = OpenAI(
-            api_key=OPENAI_API_KEY
-        )
+        logger.info("=== DEBUG: About to initialize OpenAI client ===")
+        logger.info(f"DEBUG: OpenAI class: {OpenAI}")
+        logger.info(f"DEBUG: OpenAI.__init__ signature: {OpenAI.__init__}")
+        
+        # Initialize with ONLY api_key
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        
         logger.info("✓ OpenAI client initialized successfully")
+        logger.info(f"DEBUG: Client type: {type(openai_client)}")
         return openai_client
+        
+    except TypeError as te:
+        logger.error(f"TypeError during OpenAI initialization: {str(te)}")
+        logger.error(f"Full traceback:")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
-
 # ==================================================
 # DATABASE INITIALIZATION
 # ==================================================
