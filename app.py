@@ -170,16 +170,20 @@ def initialize_openai_client():
     try:
         logger.info("=== DEBUG: About to initialize OpenAI client ===")
         
-        # Importuj httpx i stwórz klienta BEZ proxy
+        # Wymuś brak proxy przez ustawienie zmiennych środowiskowych na pusty string
+        import os
+        proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
+        for var in proxy_vars:
+            os.environ[var] = ''  # Ustaw na pusty string zamiast usuwać
+            logger.info(f"DEBUG: Set {var} to empty string")
+        
+        # Importuj httpx i stwórz prostego klienta bez dodatkowych argumentów
         import httpx
         
-        # Stwórz custom HTTP client który ignoruje proxy
-        custom_http_client = httpx.Client(
-            proxies=None,  # Wymuś brak proxy
-            timeout=60.0
-        )
+        # Stwórz custom HTTP client BEZ żadnych proxy-related argumentów
+        custom_http_client = httpx.Client(timeout=60.0)
         
-        logger.info("DEBUG: Created custom HTTP client without proxies")
+        logger.info("DEBUG: Created custom HTTP client")
         
         # Initialize OpenAI z custom HTTP client
         openai_client = OpenAI(
