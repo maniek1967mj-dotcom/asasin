@@ -6,7 +6,6 @@ import time
 from datetime import datetime, timedelta
 from functools import wraps
 import traceback
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import jwt
@@ -42,27 +41,6 @@ except Exception as e:
     logger.error(f"Failed to check OpenAI version: {e}")
     logger.error(traceback.format_exc())
 # --- End: OpenAI version logging ---
-
-=======
-    logger.info(f"OpenAI module: package={getattr(_openai,'__package__', None)}, "
-                f"file={getattr(_openai,'__file__', None)}, version={ver}")
-=======
-        f"OpenAI module: package={getattr(_openai,'__package__', None)}, "
-        f"file={getattr(_openai,'__file__', None)}, version={ver}"
-    )
-except Exception as e:
-    import traceback
-    logger.error(f"Failed to check OpenAI version: {e}")
-    logger.error(traceback.format_exc())
-    # Logujemy także typ wyjątku i reprezentację obiektu dla kontekstu diagnostycznego
-    try:
-        logger.error(f"Exception type: {type(e)}; repr: {repr(e)}")
-    except Exception:
-        logger.error("Failed to log exception details.")
-# --- End: OpenAI version logging ---       
-     
-=======
-# --- End: OpenAI version logging ---     
 
 # ==================================================
 # ENVIRONMENT VARIABLES
