@@ -15,12 +15,12 @@ import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI
-<<<<<<< HEAD
+
     
 from werkzeug.exceptions import HTTPException
 =======
        from werkzeug.exceptions import HTTPException
->>>>>>> 6c2d10f (Resolve Git conflict and fix OpenAI version logging)
+
 
 # ==================================================
 # LOGGING CONFIGURATION
@@ -49,6 +49,22 @@ except Exception as e:
 
 
 
+=======
+    logger.info(f"OpenAI module: package={getattr(_openai,'__package__', None)}, "
+                f"file={getattr(_openai,'__file__', None)}, version={ver}")
+except Exception as e:
+    import traceback
+    logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+    logger.error("=== OpenAI init: full traceback ===")
+    logger.error(traceback.format_exc())
+    # Logujemy także typ wyjątku i reprezentację obiektu dla kontekstu diagnostycznego
+    try:
+        logger.error(f"Exception type: {type(e)}; repr: {repr(e)}")
+    except Exception:
+        logger.error("Failed to log exception details.")
+# --- End: OpenAI version logging ---       
+     
+>>>>>>> b87f212 (Fix OpenAI logging syntax and indentation)
 # ==================================================
 # ENVIRONMENT VARIABLES
 # ==================================================
