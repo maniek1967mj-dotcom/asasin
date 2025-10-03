@@ -15,10 +15,10 @@ import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI
-<<<<<<< HEAD
+     HEAD
 
-=======
->>>>>>> 8c5d3a8 (Move OpenAI version logging after logger definition)
+
+     8c5d3a8 (Move OpenAI version logging after logger definition)
 from werkzeug.exceptions import HTTPException
 
 # ==================================================
