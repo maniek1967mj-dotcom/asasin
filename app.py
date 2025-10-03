@@ -169,28 +169,31 @@ def initialize_openai_client():
     
     try:
         logger.info("=== DEBUG: About to initialize OpenAI client ===")
-        logger.info(f"DEBUG: OpenAI class: {OpenAI}")
-        logger.info(f"DEBUG: OpenAI.__init__ signature: {OpenAI.__init__}")
+        
+        # Wymuś brak proxy - usuń zmienne środowiskowe przed inicjalizacją
+        import os
+        proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']
+        for var in proxy_vars:
+            if var in os.environ:
+                logger.warning(f"DEBUG: Removing proxy variable: {var}={os.environ[var]}")
+                del os.environ[var]
         
         # Initialize with ONLY api_key
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
         
         logger.info("✓ OpenAI client initialized successfully")
-        logger.info(f"DEBUG: Client type: {type(openai_client)}")
         return openai_client
         
     except TypeError as te:
         logger.error(f"TypeError during OpenAI initialization: {str(te)}")
-        logger.error(f"Full traceback:")
         import traceback
         logger.error(traceback.format_exc())
         return None
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {str(e)}")
-        logger.error(f"Exception type: {type(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        return None
+        return Nonee
 # ==================================================
 # DATABASE INITIALIZATION
 # ==================================================
