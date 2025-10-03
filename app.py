@@ -92,6 +92,55 @@ logger.info(f"RAILWAY_ENVIRONMENT: {RAILWAY_ENVIRONMENT}")
 # ==================================================
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
+import os
+import sys
+import json
+import logging
+import time
+from datetime import datetime, timedelta
+from functools import wraps
+import traceback
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import jwt
+import bcrypt
+import psycopg2
+from psycopg2 import pool, OperationalError
+from psycopg2.extras import RealDictCursor
+from openai import OpenAI
+
+# NOWA LINIA - Import modeli
+from models import db, MenuItem, Inventory, Employee, Shift, Reservation, Order, OrderItem, FinancialRecord, SocialMediaPost
+
+from werkzeug.exceptions import HTTPException
+
+# ... reszta kodu logging ...
+
+# ... kod środowiska ...
+
+# FLASK APP INITIALIZATION
+app = Flask(__name__)
+app.config['JSON_SORT_KEYS'] = False
+# NOWE LINIE - SQLAlchemy configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+}
+
+# Initialize database
+db.init_app(app)
+
+# CORS configuration
+CORS(app, resources={
+    r"/*": {
+        "origins": ["*"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # CORS configuration
 CORS(app, resources={
