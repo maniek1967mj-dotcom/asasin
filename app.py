@@ -37,8 +37,17 @@ try:
     import openai as _openai
     ver = getattr(_openai, "__version__", "unknown")
     logger.info(f"OpenAI module: package={getattr(_openai,'__package__', None)}, file={getattr(_openai,'__file__', None)}, version={ver}")
-except Exception as _e:
-    logger.info(f"OpenAI version check failed: {_e}")
+except Exception as e:
+    import traceback
+    logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+    logger.error("=== OpenAI init: full traceback ===")
+    logger.error(traceback.format_exc())
+    # Logujemy także typ wyjątku i reprezentację obiektu dla dodatkowej diagnostyki:
+    try:
+        logger.error(f"Exception type: {type(e)}; repr: {repr(e)}")
+    except Exception:
+        pass
+    return None
 # --- End: OpenAI version logging ---
  HEAD
 
