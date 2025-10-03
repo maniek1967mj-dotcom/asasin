@@ -52,10 +52,13 @@ except Exception as e:
 =======
     logger.info(f"OpenAI module: package={getattr(_openai,'__package__', None)}, "
                 f"file={getattr(_openai,'__file__', None)}, version={ver}")
+=======
+        f"OpenAI module: package={getattr(_openai,'__package__', None)}, "
+        f"file={getattr(_openai,'__file__', None)}, version={ver}"
+    )
 except Exception as e:
     import traceback
-    logger.error(f"Failed to initialize OpenAI client: {str(e)}")
-    logger.error("=== OpenAI init: full traceback ===")
+    logger.error(f"Failed to check OpenAI version: {e}")
     logger.error(traceback.format_exc())
     # Logujemy także typ wyjątku i reprezentację obiektu dla kontekstu diagnostycznego
     try:
@@ -64,7 +67,9 @@ except Exception as e:
         logger.error("Failed to log exception details.")
 # --- End: OpenAI version logging ---       
      
->>>>>>> b87f212 (Fix OpenAI logging syntax and indentation)
+=======
+# --- End: OpenAI version logging ---     
+
 # ==================================================
 # ENVIRONMENT VARIABLES
 # ==================================================
