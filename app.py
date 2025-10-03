@@ -371,18 +371,51 @@ def token_required(f):
 # ==================================================
 # HEALTH CHECK ENDPOINTS
 # ==================================================
-@app.route('/', methods=['GET'])
-def root():
-    """Root endpoint"""
+@app.route('/')
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'message': 'Flask API is running',
-        'environment': RAILWAY_ENVIRONMENT,
+        'environment': 'production',
         'timestamp': datetime.utcnow().isoformat()
-    })
+    }), 200
 
-@app.route('/health', methods=['GET'])
-def health_check():
+
+@app.route('/check_db')
+def check_db():
+    """Sprawdzenie połączenia z bazą danych i statystyk tabel"""
+    try:
+        # Test połączenia
+        with db.engine.connect() as conn:
+            conn.execute(db.text('SELECT 1'))
+        
+        # Sprawdzenie liczby rekordów w tabelach
+        stats = {
+            'menu_items': MenuItem.query.count(),
+            'inventory': Inventory.query.count(),
+            'employees': Employee.query.count(),
+            'shifts': Shift.query.count(),
+            'reservations': Reservation.query.count(),
+            'orders': Order.query.count(),
+            'order_items': OrderItem.query.count(),
+            'financial_records': FinancialRecord.query.count(),
+            'social_media_posts': SocialMediaPost.query.count()
+        }
+        
+        return jsonify({
+            'status': 'connected',
+            'database': 'PostgreSQL',
+            'tables': stats,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+    except Exception as e:
+        logger.error(f"Database check failed: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500def health_check():
     """Health check endpoint"""
     health_status = {
         'status': 'healthy',
