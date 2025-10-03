@@ -46,10 +46,8 @@ except Exception as e:
         pass
     return None
 # --- End: OpenAI version logging ---
- HEAD
 
 
- 8c5d3a8 (Move OpenAI version logging after logger definition)
 
 # ==================================================
 # ENVIRONMENT VARIABLES
