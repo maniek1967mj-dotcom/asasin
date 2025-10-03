@@ -898,6 +898,33 @@ def startup_sequence():
 startup_sequence()
 
 # ==================================================
+# DATABASE INITIALIZATION ENDPOINT
+# ==================================================
+@app.route('/init-database', methods=['POST'])
+def init_database_endpoint():
+    """Endpoint do inicjalizacji bazy danych - tworzy wszystkie tabele"""
+    try:
+        logger.info("=== Inicjalizacja bazy danych ===")
+        db.create_all()
+        logger.info("✅ Wszystkie tabele utworzone pomyślnie")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Database initialized successfully',
+            'tables': [
+                'menu_items', 'inventory', 'employees', 'shifts',
+                'reservations', 'orders', 'order_items',
+                'financial_records', 'social_media_posts'
+            ]
+        }), 200
+    except Exception as e:
+        logger.error(f"❌ Błąd inicjalizacji bazy: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+# ==================================================
 # MAIN ENTRY POINT
 # ==================================================
 if __name__ == '__main__':
